@@ -1,0 +1,101 @@
+---
+resource_types:
+- name: terraform
+  type: docker-image
+  source:
+    repository: ljfranklin/terraform-resource
+    tag: "0.11.10"
+
+resources:
+- name: this-repo
+  type: git
+  source:
+    uri: https://github.com/crsimmons/credhub-backup.git
+
+- name: backup-bucket
+  type: s3
+  source:
+    bucket: ((bucket_name))
+    versioned_file: ((deployment_name))-credhub.yml
+    access_key_id: ((aws_access_key_id))
+    secret_access_key: ((aws_secret_access_key))
+    region_name: ((bucket_region))
+
+- name: hourly
+  type: time
+  source: {interval: 1h}
+
+- name: pcf-ops
+  type: docker-image
+  source:
+    repository: engineerbetter/pcf-ops
+
+- name: concourse-up-release
+  type: github-release
+  source:
+    user: engineerbetter
+    repository: concourse-up
+    access_token: ((github_access_token))
+
+- name: bucket-tf
+  type: terraform
+  source:
+    terraform_source: this-repo/tf/
+    storage:
+      bucket: ((bucket_name))
+      bucket_path: /terraform/
+      access_key_id: ((aws_access_key_id))
+      secret_access_key: ((aws_secret_access_key))
+      region_name: ((bucket_region))
+      server_side_encryption: AES256
+    vars:
+      bucket_name: ((bucket_name))
+    env:
+      AWS_ACCESS_KEY_ID: ((aws_access_key_id))
+      AWS_SECRET_ACCESS_KEY: ((aws_secret_access_key))
+      AWS_DEFAULT_REGION: ((bucket_region))
+
+jobs:
+- name: create-bucket
+  serial: true
+  plan:
+  - aggregate:
+    - get: hourly
+      trigger: true
+    - get: this-repo
+      trigger: true
+  - put: bucket-tf
+    params:
+      env_name: env
+
+- name: backup
+  serial: true
+  plan:
+  - aggregate:
+    - get: hourly
+      trigger: true
+      passed: [create-bucket]
+    - get: pcf-ops
+    - get: concourse-up-release
+      params:
+        globs:
+        - concourse-up-linux-amd64
+  - task: credhub-export
+    image: pcf-ops
+    config:
+      platform: linux
+      inputs:
+      - name: concourse-up-release
+      outputs:
+      - name: exported-file
+      run:
+        path: sh
+        args:
+        - -euc
+        - |
+          chmod +x concourse-up-release/concourse-up-linux-amd64
+          eval "$(./concourse-up-release/concourse-up-linux-amd64 info --region ((region)) --env ((deployment_name)))"
+          credhub export -f exported-file/((deployment_name))-credhub.yml
+  - put: backup-bucket
+    params:
+      file: exported-file/((deployment_name))-credhub.yml
