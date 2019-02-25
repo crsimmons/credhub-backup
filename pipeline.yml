@@ -75,6 +75,9 @@ jobs:
     - get: hourly
       trigger: true
       passed: [create-bucket]
+    - get: this-repo
+      trigger: true
+      passed: [create-bucket]
     - get: pcf-ops
     - get: concourse-up-release
       params:
@@ -82,20 +85,10 @@ jobs:
         - concourse-up-linux-amd64
   - task: credhub-export
     image: pcf-ops
-    config:
-      platform: linux
-      inputs:
-      - name: concourse-up-release
-      outputs:
-      - name: exported-file
-      run:
-        path: sh
-        args:
-        - -euc
-        - |
-          chmod +x concourse-up-release/concourse-up-linux-amd64
-          eval "$(./concourse-up-release/concourse-up-linux-amd64 info --region ((region)) --env ((deployment_name)))"
-          credhub export -f exported-file/((deployment_name))-credhub.yml
+    file: this-repo/tasks/backup.yml
+    params:
+      REGION: ((region))
+      DEPLOYMENT_NAME: ((deployment_name))
   - put: backup-bucket
     params:
       file: exported-file/((deployment_name))-credhub.yml

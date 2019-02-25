@@ -1,0 +1,15 @@
+---
+platform: linux
+
+params:
+  REGION:
+  DEPLOYMENT_NAME:
+
+inputs:
+- name: concourse-up-release
+- name: this-repo
+outputs:
+- name: exported-file
+
+run:
+  path: this-repo/tasks/backup.sh
